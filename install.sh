@@ -124,35 +124,43 @@ fi
 
 ok "FreePing installed"
 
-# --- Create launcher ---
-LAUNCHER="$HOME/.local/bin/freeping"
-mkdir -p "$HOME/.local/bin"
+# --- Create launchers ---
+BIN_DIR="$HOME/.local/bin"
+mkdir -p "$BIN_DIR"
 
+# Main launcher: "Freeping" (capital F)
+LAUNCHER="$BIN_DIR/Freeping"
 cat > "$LAUNCHER" << 'LAUNCHER_EOF'
 #!/usr/bin/env bash
 export FREEPING_HOME="${FREEPING_HOME:-$HOME/.freeping}"
-exec "$FREEPING_HOME/venv/bin/freeping-gui" "$@"
+exec "$FREEPING_HOME/venv/bin/Freeping" "$@"
 LAUNCHER_EOF
 chmod +x "$LAUNCHER"
 
-# Also create desktop entry for Linux
+# Also "freeping" (lowercase) as symlink for compatibility
+ln -sf "Freeping" "$BIN_DIR/freeping"
+
+ok "Launcher created: Freeping (y freeping como alias)"
+
+# Desktop entry for Linux
 if [ "$OS" = "linux" ]; then
     DESKTOP_DIR="$HOME/.local/share/applications"
     mkdir -p "$DESKTOP_DIR"
-    cat > "$DESKTOP_DIR/freeping.desktop" << DESKTOP_EOF
+    cat > "$DESKTOP_DIR/FreePing.desktop" << DESKTOP_EOF
 [Desktop Entry]
 Name=FreePing
-Comment=Free gaming VPN using Oracle Cloud
-Exec=$LAUNCHER
+Comment=Reducción de latencia para juegos via Oracle Cloud + WireGuard
+Exec=$BIN_DIR/Freeping
 Icon=network-server
 Terminal=false
 Type=Application
 Categories=Network;Game;Utility;
+StartupWMClass=FreePing
 DESKTOP_EOF
-    ok "Desktop entry created"
+    ok "Desktop entry created: FreePing"
 fi
 
-# --- Add to PATH if needed ---
+# --- Add ~/.local/bin to PATH if needed ---
 if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
     SHELL_CONFIG=""
     case "$SHELL" in
@@ -169,8 +177,8 @@ echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║  FreePing installed successfully!       ║${NC}"
 echo -e "${GREEN}║                                          ║${NC}"
-echo -e "${GREEN}║  Run it:  freeping                        ║${NC}"
-echo -e "${GREEN}║  Or:      $LAUNCHER          ║${NC}"
+echo -e "${GREEN}║  Run it:  Freeping                          ║${NC}"
+echo -e "${GREEN}║  Or:     freeping                          ║${NC}"
 echo -e "${GREEN}║                                          ║${NC}"
 echo -e "${GREEN}║  First time? The setup wizard will       ║${NC}"
 echo -e "${GREEN}║  guide you through creating your free    ║${NC}"

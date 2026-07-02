@@ -28,6 +28,7 @@ dev = [
 build = ["pyinstaller>=6.0"]
 
 [project.scripts]
+Freeping = "freeping.gui.app:launch_gui"
 freeping = "freeping.__main__:main"
 freeping-gui = "freeping.gui.app:launch_gui"
 
