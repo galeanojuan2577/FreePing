@@ -14,38 +14,40 @@ class TrayIcon(QSystemTrayIcon):
         self,
         parent: object,
         on_toggle: Callable[[], None] | None = None,
+        on_quit: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._on_toggle = on_toggle
+        self._on_quit = on_quit
         self._state = TunnelState.INACTIVE
 
         self.setIcon(self._make_icon("#888888"))
-        self.setToolTip("FreePing - Inactive")
+        self.setToolTip("FreePing — Inactivo")
 
         self._setup_menu()
 
     def _setup_menu(self) -> None:
         menu = QMenu()
 
-        self.action_status = QAction("Inactive")
+        self.action_status = QAction("Inactivo")
         self.action_status.setEnabled(False)
         menu.addAction(self.action_status)
 
         menu.addSeparator()
 
-        self.action_toggle = QAction("Activate")
+        self.action_toggle = QAction("Activar")
         self.action_toggle.triggered.connect(self._handle_toggle)
         menu.addAction(self.action_toggle)
 
         menu.addSeparator()
 
-        self.action_show = QAction("Show Window")
+        self.action_show = QAction("Mostrar Ventana")
         self.action_show.triggered.connect(self._show_window)
         menu.addAction(self.action_show)
 
         menu.addSeparator()
 
-        self.action_quit = QAction("Quit")
+        self.action_quit = QAction("Salir")
         self.action_quit.triggered.connect(self._quit)
         menu.addAction(self.action_quit)
 
@@ -56,24 +58,24 @@ class TrayIcon(QSystemTrayIcon):
 
         if state == TunnelState.ACTIVE:
             self.setIcon(self._make_icon("#4CAF50"))
-            self.setToolTip("FreePing - Connected")
-            self.action_status.setText("Connected")
-            self.action_toggle.setText("Deactivate")
+            self.setToolTip("FreePing — Conectado")
+            self.action_status.setText("Conectado")
+            self.action_toggle.setText("Desactivar")
         elif state == TunnelState.ERROR:
             self.setIcon(self._make_icon("#f44336"))
-            self.setToolTip("FreePing - Error")
+            self.setToolTip("FreePing — Error")
             self.action_status.setText("Error")
-            self.action_toggle.setText("Retry")
+            self.action_toggle.setText("Reintentar")
         elif state == TunnelState.CONNECTING:
             self.setIcon(self._make_icon("#FFC107"))
-            self.setToolTip("FreePing - Connecting...")
-            self.action_status.setText("Connecting...")
-            self.action_toggle.setText("Cancel")
+            self.setToolTip("FreePing — Conectando...")
+            self.action_status.setText("Conectando...")
+            self.action_toggle.setText("Cancelar")
         else:
             self.setIcon(self._make_icon("#888888"))
-            self.setToolTip("FreePing - Inactive")
-            self.action_status.setText("Inactive")
-            self.action_toggle.setText("Activate")
+            self.setToolTip("FreePing — Inactivo")
+            self.action_status.setText("Inactivo")
+            self.action_toggle.setText("Activar")
 
     def _handle_toggle(self) -> None:
         if self._on_toggle:
@@ -87,9 +89,14 @@ class TrayIcon(QSystemTrayIcon):
             parent.activateWindow()
 
     def _quit(self) -> None:
-        parent = self.parent()
-        if parent and hasattr(parent, "close"):
-            parent.close()
+        if self._on_quit:
+            self._on_quit()
+        else:
+            parent = self.parent()
+            if parent and hasattr(parent, "_force_quit"):
+                parent._force_quit = True
+            if parent and hasattr(parent, "close"):
+                parent.close()
 
     def _make_icon(self, color_hex: str) -> QIcon:
         pixmap = QPixmap(64, 64)

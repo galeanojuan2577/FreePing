@@ -18,7 +18,7 @@ class SettingsDialog(QDialog):
     def __init__(self, config: AppConfig, parent=None) -> None:
         super().__init__(parent)
         self._original = config
-        self.setWindowTitle("FreePing Settings")
+        self.setWindowTitle("Configuración de FreePing")
         self.setMinimumWidth(450)
 
         self._setup_ui()
@@ -27,30 +27,30 @@ class SettingsDialog(QDialog):
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
 
-        vps_group = QGroupBox("VPS Configuration")
+        vps_group = QGroupBox("Configuración del VPS")
         vps_layout = QFormLayout(vps_group)
 
         self.vps_ip = QLineEdit()
-        self.vps_ip.setPlaceholderText("Public IP address")
-        vps_layout.addRow("VPS IP:", self.vps_ip)
+        self.vps_ip.setPlaceholderText("Dirección IP pública")
+        vps_layout.addRow("IP del VPS:", self.vps_ip)
 
         self.vps_port = QSpinBox()
         self.vps_port.setRange(1024, 65535)
         self.vps_port.setValue(51820)
-        vps_layout.addRow("WireGuard Port:", self.vps_port)
+        vps_layout.addRow("Puerto WireGuard:", self.vps_port)
 
         layout.addWidget(vps_group)
 
         general_group = QGroupBox("General")
         general_layout = QVBoxLayout(general_group)
 
-        self.auto_reconnect = QCheckBox("Auto-reconnect on disconnect")
+        self.auto_reconnect = QCheckBox("Reconectar automáticamente al desconectarse")
         general_layout.addWidget(self.auto_reconnect)
 
-        self.minimize_tray = QCheckBox("Minimize to system tray on close")
+        self.minimize_tray = QCheckBox("Minimizar a la bandeja del sistema al cerrar")
         general_layout.addWidget(self.minimize_tray)
 
-        self.start_boot = QCheckBox("Start on system boot")
+        self.start_boot = QCheckBox("Iniciar con el sistema")
         general_layout.addWidget(self.start_boot)
 
         layout.addWidget(general_group)

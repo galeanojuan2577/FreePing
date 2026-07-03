@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import logging
 import platform
 import re
 import subprocess
 from pathlib import Path
 
 from freeping.core.models import TunnelConfig, TunnelState
+
+logger = logging.getLogger("freeping.tunnel")
+
+_SUBPROCESS_TIMEOUT = 30
 
 
 class TunnelError(Exception):
@@ -43,6 +48,8 @@ class TunnelManager:
             self._state = TunnelState.ACTIVE
         except Exception as e:
             self._state = TunnelState.ERROR
+            if conf_path.exists():
+                conf_path.unlink()
             raise TunnelError(f"Failed to start tunnel: {e}")
 
     async def stop(self) -> None:
@@ -70,10 +77,14 @@ class TunnelManager:
         return self._check_linux_interface()
 
     def _start_linux(self, conf_path: Path) -> None:
-        result = subprocess.run(
-            ["wg-quick", "up", str(conf_path)],
-            capture_output=True, text=True,
-        )
+        try:
+            result = subprocess.run(
+                ["wg-quick", "up", str(conf_path)],
+                capture_output=True, text=True,
+                timeout=_SUBPROCESS_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            raise TunnelError("wg-quick up timed out")
         if result.returncode != 0:
             raise TunnelError(f"wg-quick up failed: {result.stderr.strip()}")
 
@@ -82,73 +93,104 @@ class TunnelManager:
             subprocess.run(
                 ["wg-quick", "down", self._interface_name],
                 capture_output=True, text=True,
+                timeout=_SUBPROCESS_TIMEOUT,
             )
-        except subprocess.CalledProcessError:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            logger.warning("wg-quick down failed: %s", e)
             try:
                 subprocess.run(
                     ["ip", "link", "delete", self._interface_name],
                     capture_output=True, text=True,
+                    timeout=_SUBPROCESS_TIMEOUT,
                 )
-            except subprocess.CalledProcessError:
-                pass
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e2:
+                logger.warning("ip link delete failed: %s", e2)
 
     def _check_linux_interface(self) -> bool:
         try:
             result = subprocess.run(
                 ["ip", "link", "show", self._interface_name],
                 capture_output=True, text=True,
+                timeout=_SUBPROCESS_TIMEOUT,
             )
             return result.returncode == 0
-        except FileNotFoundError:
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            logger.debug("Interface check failed: %s", e)
             return False
 
     def _start_windows(self, conf_path: Path) -> None:
         wg_exe = self._find_wireguard_windows()
         if wg_exe:
-            result = subprocess.run(
-                [wg_exe, "/installtunnelservice", str(conf_path)],
-                capture_output=True, text=True,
-            )
+            try:
+                result = subprocess.run(
+                    [wg_exe, "/installtunnelservice", str(conf_path)],
+                    capture_output=True, text=True,
+                    timeout=_SUBPROCESS_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired:
+                raise TunnelError("WireGuard install timed out")
             if result.returncode != 0:
                 raise TunnelError(f"WireGuard install failed: {result.stderr.strip()}")
 
-            subprocess.run(
-                ["net", "start", f"WireGuardTunnel${self._interface_name}"],
-                capture_output=True, text=True,
-            )
+            try:
+                subprocess.run(
+                    ["net", "start", f"WireGuardTunnel${self._interface_name}"],
+                    capture_output=True, text=True,
+                    timeout=_SUBPROCESS_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired:
+                raise TunnelError("WireGuard service start timed out")
         else:
-            result = subprocess.run(
-                ["wg-quick", "up", str(conf_path)],
-                capture_output=True, text=True,
-            )
+            try:
+                result = subprocess.run(
+                    ["wg-quick", "up", str(conf_path)],
+                    capture_output=True, text=True,
+                    timeout=_SUBPROCESS_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired:
+                raise TunnelError("wg-quick up timed out")
             if result.returncode != 0:
                 raise TunnelError(f"wg-quick up failed: {result.stderr.strip()}")
 
     def _stop_windows(self) -> None:
         wg_exe = self._find_wireguard_windows()
         if wg_exe:
-            subprocess.run(
-                ["net", "stop", f"WireGuardTunnel${self._interface_name}"],
-                capture_output=True, text=True,
-            )
-            subprocess.run(
-                [wg_exe, "/uninstalltunnelservice", self._interface_name],
-                capture_output=True, text=True,
-            )
+            try:
+                subprocess.run(
+                    ["net", "stop", f"WireGuardTunnel${self._interface_name}"],
+                    capture_output=True, text=True,
+                    timeout=_SUBPROCESS_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired:
+                logger.warning("WireGuard service stop timed out")
+            try:
+                subprocess.run(
+                    [wg_exe, "/uninstalltunnelservice", self._interface_name],
+                    capture_output=True, text=True,
+                    timeout=_SUBPROCESS_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired:
+                logger.warning("WireGuard uninstall timed out")
         else:
-            subprocess.run(
-                ["wg-quick", "down", self._interface_name],
-                capture_output=True, text=True,
-            )
+            try:
+                subprocess.run(
+                    ["wg-quick", "down", self._interface_name],
+                    capture_output=True, text=True,
+                    timeout=_SUBPROCESS_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired:
+                logger.warning("wg-quick down timed out")
 
     def _check_windows_interface(self) -> bool:
         try:
             result = subprocess.run(
                 ["wg", "show", self._interface_name],
                 capture_output=True, text=True,
+                timeout=_SUBPROCESS_TIMEOUT,
             )
             return result.returncode == 0
-        except FileNotFoundError:
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            logger.debug("Windows interface check failed: %s", e)
             return False
 
     @staticmethod
@@ -167,6 +209,7 @@ class TunnelManager:
             result = subprocess.run(
                 ["wg", "show", self._interface_name, "transfer"],
                 capture_output=True, text=True,
+                timeout=_SUBPROCESS_TIMEOUT,
             )
             if result.returncode == 0:
                 match = re.search(
@@ -180,6 +223,8 @@ class TunnelManager:
                         "received_packets": int(match.group(3)),
                         "sent_packets": int(match.group(4)),
                     }
-        except Exception:
-            pass
+        except subprocess.TimeoutExpired:
+            logger.warning("wg show transfer timed out")
+        except Exception as e:
+            logger.debug("Failed to get interface stats: %s", e)
         return {}

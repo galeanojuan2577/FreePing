@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import typing
-from typing import Optional
 
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtGui import QAction
@@ -23,9 +23,15 @@ from PySide6.QtWidgets import (
 )
 
 from freeping.core.config import AppConfig
-from freeping.core.models import TunnelState
+from freeping.core.models import LatencyResult, TunnelState
 from freeping.gui.tray_icon import TrayIcon
 from freeping.gui.wizard import SetupWizard
+
+if typing.TYPE_CHECKING:
+    from freeping.core.tunnel import TunnelManager
+    from freeping.core.watchdog import Watchdog
+
+logger = logging.getLogger("freeping.gui")
 
 
 class FreePingWindow(QMainWindow):
@@ -35,11 +41,13 @@ class FreePingWindow(QMainWindow):
         super().__init__()
         self.config = AppConfig.load()
         self._tunnel_state = TunnelState.INACTIVE
-        self._tunnel_manager: Optional = None
-        self._watchdog: Optional = None
+        self._tunnel_manager: TunnelManager | None = None
+        self._watchdog: Watchdog | None = None
         self._event_loop: asyncio.AbstractEventLoop | None = None
         self._ping_without: float | None = None
         self._ping_with: float | None = None
+        self._async_busy = False
+        self._current_task: asyncio.Task | None = None
 
         self._setup_ui()
         self._setup_menu()
@@ -51,7 +59,7 @@ class FreePingWindow(QMainWindow):
         self._first_show = True
 
     def _setup_ui(self) -> None:
-        self.setWindowTitle("FreePing v0.1.0 — Gaming VPN")
+        self.setWindowTitle("FreePing — VPN para Gaming")
         self.setMinimumSize(700, 620)
         self.resize(780, 660)
 
@@ -61,99 +69,114 @@ class FreePingWindow(QMainWindow):
         main_layout.setSpacing(12)
         main_layout.setContentsMargins(16, 16, 16, 16)
 
-        # --- Latency Dashboard Card ---
-        dash_group = QGroupBox("Latency Dashboard")
-        dash_group.setToolTip("Compare your ping with and without the FreePing tunnel")
+        # --- Estado del Túnel ---
+        status_group = QGroupBox("Estado del Túnel")
+        status_layout = QGridLayout(status_group)
+
+        self.status_icon = QLabel("○")
+        self.status_icon.setStyleSheet("font-size: 28px; color: #888;")
+        self.status_icon.setToolTip("● Conectado  ○ Inactivo  ● Error")
+        self.status_label = QLabel("Inactivo")
+        self.status_label.setStyleSheet("font-size: 18px; font-weight: bold;")
+        status_layout.addWidget(self.status_icon, 0, 0)
+        status_layout.addWidget(self.status_label, 0, 1)
+
+        self.vps_label = QLabel("VPS: No configurado")
+        self.vps_label.setStyleSheet("font-size: 12px; color: #999;")
+        self.vps_label.setToolTip("La IP pública de tu VPS en Oracle Cloud")
+        status_layout.addWidget(self.vps_label, 1, 0, 1, 2)
+
+        self.transfer_label = QLabel("TX: 0 B  |  RX: 0 B")
+        self.transfer_label.setStyleSheet("font-size: 12px; color: #999;")
+        self.transfer_label.setToolTip("Datos transferidos a través del túnel")
+        status_layout.addWidget(self.transfer_label, 2, 0, 1, 2)
+
+        main_layout.addWidget(status_group)
+
+        # --- Región ---
+        region_group = QGroupBox("Región del Servidor")
+        region_layout = QVBoxLayout(region_group)
+
+        self.region_combo = QComboBox()
+        self.region_combo.setToolTip("Selecciona la región para tu VPS. Cambiar región requiere reconfigurar.")
+        self.region_combo.addItem("Seleccionar región...", "")
+        from freeping.provisioning.oci_client import OCI_REGIONS
+        for key, name in sorted(OCI_REGIONS.items()):
+            self.region_combo.addItem(name, key)
+        if self.config.vps_region in OCI_REGIONS:
+            idx = self.region_combo.findData(self.config.vps_region)
+            if idx >= 0:
+                self.region_combo.setCurrentIndex(idx)
+        region_layout.addWidget(self.region_combo)
+
+        main_layout.addWidget(region_group)
+
+        # --- Comparación de Latencia ---
+        dash_group = QGroupBox("Comparación de Latencia")
+        dash_group.setToolTip("Compara tu ping con y sin el túnel FreePing")
         dash_layout = QGridLayout(dash_group)
         dash_layout.setSpacing(4)
 
-        # Without tunnel
-        dash_layout.addWidget(QLabel("Without tunnel:"), 0, 0)
+        dash_layout.addWidget(QLabel("Sin túnel:"), 0, 0)
         self.ping_without = QLabel("--- ms")
         self.ping_without.setStyleSheet("font-size: 14px; font-weight: bold; color: #999;")
         dash_layout.addWidget(self.ping_without, 0, 1)
 
-        # With tunnel
-        dash_layout.addWidget(QLabel("With tunnel:"), 1, 0)
+        dash_layout.addWidget(QLabel("Con túnel:"), 1, 0)
         self.ping_with = QLabel("--- ms")
         self.ping_with.setStyleSheet("font-size: 14px; font-weight: bold; color: #999;")
         dash_layout.addWidget(self.ping_with, 1, 1)
 
-        # Improvement
-        dash_layout.addWidget(QLabel("Improvement:"), 2, 0)
+        dash_layout.addWidget(QLabel("Mejora:"), 2, 0)
         self.ping_improvement = QLabel("-- ms (--%)")
         self.ping_improvement.setStyleSheet("font-size: 14px; font-weight: bold; color: #666;")
         dash_layout.addWidget(self.ping_improvement, 2, 1)
 
         main_layout.addWidget(dash_group)
 
-        # --- Tunnel Status Card ---
-        status_group = QGroupBox("Tunnel Status")
-        status_layout = QGridLayout(status_group)
-
-        self.status_icon = QLabel("○")
-        self.status_icon.setStyleSheet("font-size: 28px; color: #888;")
-        self.status_icon.setToolTip("● Connected  ○ Inactive  ● Error")
-        self.status_label = QLabel("Inactive")
-        self.status_label.setStyleSheet("font-size: 18px; font-weight: bold;")
-        status_layout.addWidget(self.status_icon, 0, 0)
-        status_layout.addWidget(self.status_label, 0, 1)
-
-        self.vps_label = QLabel("VPS: Not configured")
-        self.vps_label.setStyleSheet("font-size: 12px; color: #999;")
-        self.vps_label.setToolTip("The public IP of your Oracle Cloud VPS")
-        status_layout.addWidget(self.vps_label, 1, 0, 1, 2)
-
-        self.transfer_label = QLabel("TX: 0 B  |  RX: 0 B")
-        self.transfer_label.setStyleSheet("font-size: 12px; color: #999;")
-        self.transfer_label.setToolTip("Data transferred through the tunnel")
-        status_layout.addWidget(self.transfer_label, 2, 0, 1, 2)
-
-        main_layout.addWidget(status_group)
-
-        # --- Game Selection ---
-        game_group = QGroupBox("Game / Target Selection")
-        game_group.setToolTip("Select a game to route its traffic through the tunnel")
+        # --- Selección de Juego / IPs ---
+        game_group = QGroupBox("Selección de Juego / IPs")
+        game_group.setToolTip("Selecciona un juego para enrutar su tráfico por el túnel")
         game_layout = QVBoxLayout(game_group)
 
         self.game_combo = QComboBox()
-        self.game_combo.setToolTip("Choose a pre-configured game to auto-detect its server IPs")
-        self.game_combo.addItem("Select a game...")
+        self.game_combo.setToolTip("Elige un juego preconfigurado para auto-detectar sus IPs de servidor")
+        self.game_combo.addItem("Seleccionar un juego...")
         game_layout.addWidget(self.game_combo)
 
         self.custom_ip_input = QTextEdit()
-        self.custom_ip_input.setPlaceholderText("Or enter custom IPs (one per line)...")
+        self.custom_ip_input.setPlaceholderText("O ingresa IPs personalizadas (una por línea)...")
         self.custom_ip_input.setMaximumHeight(72)
-        self.custom_ip_input.setToolTip("Manually enter game server IP addresses (one per line)")
+        self.custom_ip_input.setToolTip("Ingresa manualmente las IPs de los servidores de juego (una por línea)")
         game_layout.addWidget(self.custom_ip_input)
 
         main_layout.addWidget(game_group)
 
-        # --- Action Buttons ---
+        # --- Botones de Acción ---
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(12)
 
-        self.btn_toggle = QPushButton("Activate Tunnel")
+        self.btn_toggle = QPushButton("Activar Túnel")
         self.btn_toggle.setMinimumHeight(48)
-        self.btn_toggle.setToolTip("Start/stop the WireGuard tunnel to your VPS")
+        self.btn_toggle.setToolTip("Iniciar/detener el túnel WireGuard hacia tu VPS")
         self.btn_toggle.setStyleSheet(
             "QPushButton { font-size: 15px; font-weight: bold; border-radius: 8px; }"
             "QPushButton:enabled { background-color: #4CAF50; color: white; }"
             "QPushButton:disabled { background-color: #ccc; color: #888; }"
         )
 
-        self.btn_test = QPushButton("Test Ping")
+        self.btn_test = QPushButton("Probar Ping")
         self.btn_test.setMinimumHeight(48)
-        self.btn_test.setToolTip("Compare your ping with and without the tunnel active")
+        self.btn_test.setToolTip("Compara tu ping con y sin el túnel activo")
         self.btn_test.setStyleSheet(
             "QPushButton { font-size: 14px; border-radius: 8px; }"
             "QPushButton:enabled { background-color: #2196F3; color: white; }"
             "QPushButton:disabled { background-color: #ccc; color: #888; }"
         )
 
-        self.btn_settings = QPushButton("Settings")
+        self.btn_settings = QPushButton("Configuración")
         self.btn_settings.setMinimumHeight(48)
-        self.btn_settings.setToolTip("Adjust FreePing preferences")
+        self.btn_settings.setToolTip("Ajustar preferencias de FreePing")
 
         btn_layout.addWidget(self.btn_toggle, 2)
         btn_layout.addWidget(self.btn_test, 1)
@@ -161,7 +184,7 @@ class FreePingWindow(QMainWindow):
 
         main_layout.addLayout(btn_layout)
 
-        # --- Log output ---
+        # --- Registro de eventos ---
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
         self.log_output.setMaximumHeight(100)
@@ -169,34 +192,34 @@ class FreePingWindow(QMainWindow):
             "font-family: 'Consolas', 'Courier New', monospace;"
             " font-size: 11px; background: #1e1e1e; color: #d4d4d4;"
         )
-        self.log_output.setToolTip("Event log — shows what FreePing is doing")
+        self.log_output.setToolTip("Registro de eventos — muestra lo que FreePing está haciendo")
         main_layout.addWidget(self.log_output)
 
         self.progress = QProgressBar()
         self.progress.setVisible(False)
-        self.progress.setToolTip("Operation in progress...")
+        self.progress.setToolTip("Operación en progreso...")
         main_layout.addWidget(self.progress)
 
         status_bar = QStatusBar()
         self.setStatusBar(status_bar)
-        self.status_text = QLabel("Ready")
+        self.status_text = QLabel("Listo")
         status_bar.addPermanentWidget(self.status_text)
 
     def _auto_run_wizard(self) -> None:
         import os
         if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
-            self.status_text.setText("Not configured — run Setup Wizard from File menu")
-            self.log("FreePing is not configured. Go to File → Run Setup Wizard to get started.")
+            self.status_text.setText("No configurado — ejecuta el Asistente desde Archivo")
+            self.log("FreePing no está configurado. Ve a Archivo → Ejecutar Asistente para comenzar.")
             return
         reply = QMessageBox.question(
-            self, "Welcome to FreePing!",
-            "FreePing is not configured yet.\n\n"
-            "Would you like to run the setup wizard now?\n\n"
-            "The wizard will guide you through:\n"
-            "• Creating an Oracle Cloud account (free)\n"
-            "• Generating API credentials\n"
-            "• Deploying your free WireGuard VPS\n\n"
-            "It takes about 5 minutes.",
+            self, "¡Bienvenido a FreePing!",
+            "FreePing no está configurado aún.\n\n"
+            "¿Quieres ejecutar el asistente de configuración ahora?\n\n"
+            "El asistente te guiará a través de:\n"
+            "• Crear una cuenta de Oracle Cloud (gratis)\n"
+            "• Generar credenciales API\n"
+            "• Desplegar tu VPS WireGuard gratuito\n\n"
+            "Tarda unos 5 minutos.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
@@ -205,32 +228,40 @@ class FreePingWindow(QMainWindow):
     def _setup_menu(self) -> None:
         menubar = self.menuBar()
 
-        file_menu = menubar.addMenu("File")
-        self.action_setup = QAction("Run Setup Wizard...", self)
-        self.action_setup.setToolTip("Provision a new Oracle Cloud VPS")
+        file_menu = menubar.addMenu("Archivo")
+        self.action_setup = QAction("Ejecutar Asistente de Configuración...", self)
+        self.action_setup.setToolTip("Aprovisionar un nuevo VPS en Oracle Cloud")
         file_menu.addAction(self.action_setup)
         file_menu.addSeparator()
-        self.action_quit = QAction("Quit", self)
+        self.action_quit = QAction("Salir", self)
         self.action_quit.setShortcut("Ctrl+Q")
         file_menu.addAction(self.action_quit)
 
-        tunnel_menu = menubar.addMenu("Tunnel")
-        self.action_toggle = QAction("Activate", self)
+        tunnel_menu = menubar.addMenu("Túnel")
+        self.action_toggle = QAction("Activar", self)
         self.action_toggle.setShortcut("Ctrl+T")
-        self.action_toggle.setToolTip("Toggle tunnel on/off")
+        self.action_toggle.setToolTip("Activar/desactivar el túnel")
         tunnel_menu.addAction(self.action_toggle)
-        self.action_test = QAction("Test Ping", self)
+        self.action_test = QAction("Probar Ping", self)
         self.action_test.setShortcut("Ctrl+R")
-        self.action_test.setToolTip("Run a ping comparison test")
+        self.action_test.setToolTip("Ejecutar una prueba de ping comparativa")
         tunnel_menu.addAction(self.action_test)
 
-        help_menu = menubar.addMenu("Help")
-        self.action_about = QAction("About FreePing", self)
+        help_menu = menubar.addMenu("Ayuda")
+        self.action_about = QAction("Acerca de FreePing", self)
         help_menu.addAction(self.action_about)
 
     def _setup_tray(self) -> None:
-        self.tray_icon = TrayIcon(self, on_toggle=self._toggle_tunnel)
+        self.tray_icon = TrayIcon(
+            self,
+            on_toggle=self._toggle_tunnel,
+            on_quit=self._force_quit_app,
+        )
         self.tray_icon.show()
+
+    def _force_quit_app(self) -> None:
+        self._cleanup()
+        self.close()
 
     def _connect_signals(self) -> None:
         self.btn_toggle.clicked.connect(self._toggle_tunnel)
@@ -239,7 +270,7 @@ class FreePingWindow(QMainWindow):
         self.action_test.triggered.connect(self._run_test)
         self.btn_settings.clicked.connect(self._open_settings)
         self.action_setup.triggered.connect(self._run_wizard)
-        self.action_quit.triggered.connect(self.close)
+        self.action_quit.triggered.connect(self._force_quit_app)
         self.action_about.triggered.connect(self._show_about)
         self.game_combo.currentIndexChanged.connect(self._on_game_changed)
 
@@ -249,23 +280,29 @@ class FreePingWindow(QMainWindow):
             self._timer = QTimer(self)
             self._timer.timeout.connect(self._process_async_tasks)
             self._timer.start(50)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Error al iniciar el event loop: %s", e)
 
     def _process_async_tasks(self) -> None:
-        if self._event_loop and self._event_loop.is_running():
-            self._event_loop.stop()
+        if self._event_loop is None or self._event_loop.is_closed():
+            return
+        if self._async_busy:
+            return
+        if not self._event_loop.is_running():
+            self._async_busy = True
             try:
                 self._event_loop.run_until_complete(asyncio.sleep(0))
             except RuntimeError:
                 pass
+            finally:
+                self._async_busy = False
 
     def _toggle_tunnel(self) -> None:
         if not self.config.is_configured():
-            self.log("VPS not configured. Run Setup Wizard first.")
+            self.log("VPS no configurado. Ejecuta el Asistente de Configuración primero.")
             reply = QMessageBox.question(
-                self, "Not Configured",
-                "FreePing is not configured yet. Run the setup wizard now?",
+                self, "No Configurado",
+                "FreePing no está configurado aún. ¿Ejecutar el asistente ahora?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.Yes:
@@ -280,50 +317,80 @@ class FreePingWindow(QMainWindow):
     async def _activate_tunnel_async(self) -> None:
         from freeping.core.tunnel import TunnelManager
 
-        conf_path = AppConfig.CONFIG_DIR / "tunnel.conf"
+        conf_path = AppConfig.config_dir() / "tunnel.conf"
         self._tunnel_manager = TunnelManager(self.config.tunnel)
 
         try:
-            self.log("Activating tunnel...")
-            self.status_text.setText("Activating...")
+            self.log("Activando túnel...")
+            self.status_text.setText("Activando...")
             await self._tunnel_manager.start(conf_path)
             self._tunnel_state = TunnelState.ACTIVE
-            self.log("Tunnel activated successfully")
-            self.status_text.setText("Connected")
+            self.log("Túnel activado exitosamente")
+            self.status_text.setText("Conectado")
+            self._start_watchdog()
             self._auto_run_test()
         except Exception as e:
             self._tunnel_state = TunnelState.ERROR
-            self.log(f"Failed to activate tunnel: {e}")
-            self.status_text.setText("Activation failed")
-            QMessageBox.critical(self, "Error", f"Failed to activate tunnel:\n{e}")
+            self.log(f"Error al activar túnel: {e}")
+            self.status_text.setText("Error de activación")
+            QMessageBox.critical(self, "Error", f"Error al activar el túnel:\n{e}")
 
         self._update_ui_state()
+
+    def _start_watchdog(self) -> None:
+        if not self.config.auto_reconnect:
+            return
+        if not self.config.vps_ip:
+            return
+        from freeping.core.watchdog import Watchdog
+        self._watchdog = Watchdog(
+            vps_ip=self.config.vps_ip,
+            on_state_change=self._on_watchdog_state_change,
+            on_reconnect=self._on_watchdog_reconnect,
+        )
+        self._watchdog.start()
+        logger.info("Watchdog iniciado para %s", self.config.vps_ip)
+
+    def _on_watchdog_state_change(self, state: TunnelState) -> None:
+        self._tunnel_state = state
+        self._update_ui_state()
+
+    def _on_watchdog_reconnect(self) -> None:
+        logger.info("Watchdog: reconectando...")
+        self._deactivate_tunnel()
+        self._activate_tunnel()
 
     def _auto_run_test(self) -> None:
         game_ips = self._get_selected_ips()
         if not game_ips:
-            self.log("Auto-test: No game selected. Select a game and click 'Test Ping' to see improvement.")
+            self.log("Auto-test: Ningún juego seleccionado. Selecciona un juego y haz clic en 'Probar Ping' para ver la mejora.")
             return
 
-        self.log("Auto-testing ping improvement...")
+        self.log("Probando mejora de ping automáticamente...")
         self._run_test()
 
     async def _deactivate_tunnel_async(self) -> None:
-        from freeping.core.tunnel import TunnelManager
+        if self._watchdog:
+            logger.info("Deteniendo watchdog...")
+            await self._watchdog.stop()
+            self._watchdog = None
 
-        self._tunnel_manager = TunnelManager(self.config.tunnel)
+        if self._tunnel_manager is None:
+            from freeping.core.tunnel import TunnelManager
+            self._tunnel_manager = TunnelManager(self.config.tunnel)
 
         try:
-            self.log("Deactivating tunnel...")
-            self.status_text.setText("Deactivating...")
+            self.log("Desactivando túnel...")
+            self.status_text.setText("Desactivando...")
             await self._tunnel_manager.stop()
             self._tunnel_state = TunnelState.INACTIVE
-            self.log("Tunnel deactivated")
-            self.status_text.setText("Disconnected")
+            self.log("Túnel desactivado")
+            self.status_text.setText("Desconectado")
         except Exception as e:
-            self.log(f"Error deactivating tunnel: {e}")
-            self.status_text.setText("Deactivation error")
+            self.log(f"Error al desactivar túnel: {e}")
+            self.status_text.setText("Error de desactivación")
 
+        self._tunnel_manager = None
         self._ping_without = None
         self._ping_with = None
         self._update_ping_display()
@@ -339,46 +406,81 @@ class FreePingWindow(QMainWindow):
 
     def _run_test(self) -> None:
         if not self.config.is_configured():
-            self.log("Configure your VPS first before testing.")
+            self.log("Configura tu VPS primero antes de probar.")
             return
 
         game_ips = self._get_selected_ips()
         if not game_ips:
-            self.log("Select a game or enter custom IPs first.")
+            self.log("Selecciona un juego o ingresa IPs personalizadas primero.")
             return
 
-        self.log(f"Testing latency for {len(game_ips)} target(s)...")
-        self.status_text.setText("Testing ping...")
+        self.log(f"Probando latencia para {len(game_ips)} destino(s)...")
+        self.status_text.setText("Probando ping...")
         self.progress.setVisible(True)
         self.progress.setRange(0, 0)
 
-        if self._event_loop:
-            async def test():
-                from freeping.core.ping import PingManager
-                pm = PingManager()
-                result = await pm.compare(
-                    self.config.vps_ip, game_ips,
-                    tunnel_active=self._tunnel_state == TunnelState.ACTIVE,
-                )
-                return result
-
-            result = self._event_loop.run_until_complete(test())
-
+        if not self._event_loop or self._event_loop.is_closed():
             self.progress.setVisible(False)
+            self.log("Error: event loop no disponible")
+            return
 
-            self._ping_without = result.without_tunnel_ms
-            self._ping_with = result.with_tunnel_ms
-            self._update_ping_display()
+        from freeping.core.ping import PingManager
 
-            if result.without_tunnel_ms is not None:
-                self.log(f"Without tunnel: {result.without_tunnel_ms:.0f} ms")
-            if result.with_tunnel_ms is not None:
-                self.log(f"With tunnel: {result.with_tunnel_ms:.0f} ms")
-            if result.improvement_ms is not None and result.improvement_ms > 0:
-                self.log(f"Improvement: -{result.improvement_ms:.0f} ms ({result.improvement_pct:.0f}%)")
+        async def _ping_test() -> LatencyResult:
+            pm = PingManager()
+            result = await pm.compare(
+                self.config.vps_ip, game_ips,
+                tunnel_active=self._tunnel_state == TunnelState.ACTIVE,
+            )
+            return result
 
-            self._show_test_result_dialog(result)
-            self.status_text.setText("Ping test complete")
+        task = self._event_loop.create_task(_ping_test())
+        if not self._event_loop.is_running():
+            self._event_loop.run_until_complete(asyncio.sleep(0))
+
+        if task.done():
+            self._on_ping_test_result(task.result())
+        else:
+            self._current_task = task
+
+    def _process_async_tasks(self) -> None:
+        if self._event_loop is None or self._event_loop.is_closed():
+            return
+        if self._async_busy:
+            return
+        if not self._event_loop.is_running():
+            self._async_busy = True
+            try:
+                self._event_loop.run_until_complete(asyncio.sleep(0))
+            except RuntimeError:
+                pass
+            finally:
+                self._async_busy = False
+
+        if self._current_task is not None and self._current_task.done():
+            try:
+                result = self._current_task.result()
+                self._on_ping_test_result(result)
+            except Exception as e:
+                self.progress.setVisible(False)
+                self.log(f"Error en prueba de ping: {e}")
+                self.status_text.setText("Error en prueba de ping")
+            finally:
+                self._current_task = None
+
+    def _on_ping_test_result(self, result: LatencyResult) -> None:
+        self.progress.setVisible(False)
+        self._ping_without = result.without_tunnel_ms
+        self._ping_with = result.with_tunnel_ms
+        self._update_ping_display()
+        if result.without_tunnel_ms is not None:
+            self.log(f"Sin túnel: {result.without_tunnel_ms:.0f} ms")
+        if result.with_tunnel_ms is not None:
+            self.log(f"Con túnel: {result.with_tunnel_ms:.0f} ms")
+        if result.improvement_ms is not None and result.improvement_ms > 0:
+            self.log(f"Mejora: -{result.improvement_ms:.0f} ms ({result.improvement_pct:.0f}%)")
+        self._show_test_result_dialog(result)
+        self.status_text.setText("Prueba de ping completada")
 
     def _show_test_result_dialog(self, result) -> None:
         without = f"{result.without_tunnel_ms:.0f}" if result.without_tunnel_ms is not None else "N/A"
@@ -386,38 +488,38 @@ class FreePingWindow(QMainWindow):
         improvement = result.improvement_ms
 
         lines = [
-            "Ping Comparison Results",
+            "Resultados de la Prueba de Ping",
             "─" * 35,
-            f"  Without tunnel:  {without:>6} ms",
-            f"  With tunnel:     {with_:>6} ms",
+            f"  Sin túnel:       {without:>6} ms",
+            f"  Con túnel:       {with_:>6} ms",
             "─" * 35,
         ]
 
         if improvement is not None and improvement > 0:
-            lines.append(f"  Improvement:     -{improvement:.0f} ms ({result.improvement_pct:.0f}%)  ✓")
+            lines.append(f"  Mejora:          -{improvement:.0f} ms ({result.improvement_pct:.0f}%)  ✓")
         elif improvement is not None:
-            lines.append(f"  Difference:      {improvement:.0f} ms")
-            lines.append("  No significant improvement detected.")
+            lines.append(f"  Diferencia:      {improvement:.0f} ms")
+            lines.append("  No se detectó una mejora significativa.")
         else:
-            lines.append("  Could not measure improvement.")
+            lines.append("  No se pudo medir la mejora.")
 
         self.log("\n".join(lines))
 
         if improvement is not None and improvement > 0:
             QMessageBox.information(
-                self, "Ping Test Results",
-                f"Without tunnel:  {without} ms\n"
-                f"With tunnel:     {with_} ms\n\n"
-                f"Improvement:     -{improvement:.0f} ms ({result.improvement_pct:.0f}%)\n\n"
-                "Your gaming latency is reduced! 🎮",
+                self, "Resultados de Ping",
+                f"Sin túnel:  {without} ms\n"
+                f"Con túnel:  {with_} ms\n\n"
+                f"Mejora:     -{improvement:.0f} ms ({result.improvement_pct:.0f}%)\n\n"
+                "¡Tu latencia de juego se ha reducido! 🎮",
             )
         elif improvement is not None:
             QMessageBox.information(
-                self, "Ping Test Results",
-                f"Without tunnel:  {without} ms\n"
-                f"With tunnel:     {with_} ms\n\n"
-                "No significant improvement detected.\n"
-                "Try a different VPS region or check your configuration.",
+                self, "Resultados de Ping",
+                f"Sin túnel:  {without} ms\n"
+                f"Con túnel:  {with_} ms\n\n"
+                "No se detectó una mejora significativa.\n"
+                "Prueba con una región diferente o revisa tu configuración.",
             )
 
     def _update_ping_display(self) -> None:
@@ -442,10 +544,10 @@ class FreePingWindow(QMainWindow):
                 self.ping_improvement.setText(f"-{diff:.0f} ms ({pct:.0f}%)")
                 self.ping_improvement.setStyleSheet("font-size: 14px; font-weight: bold; color: #4CAF50;")
             elif diff < 0:
-                self.ping_improvement.setText(f"+{-diff:.0f} ms (worse)")
+                self.ping_improvement.setText(f"+{-diff:.0f} ms (peor)")
                 self.ping_improvement.setStyleSheet("font-size: 14px; font-weight: bold; color: #e74c3c;")
             else:
-                self.ping_improvement.setText("0 ms (no change)")
+                self.ping_improvement.setText("0 ms (sin cambio)")
                 self.ping_improvement.setStyleSheet("font-size: 14px; font-weight: bold; color: #666;")
         else:
             self.ping_improvement.setText("-- ms (--%)")
@@ -457,7 +559,7 @@ class FreePingWindow(QMainWindow):
             return [ip.strip() for ip in custom_text.split("\n") if ip.strip()]
 
         game_name = self.game_combo.currentText()
-        if game_name and game_name != "Select a game...":
+        if game_name and game_name != "Seleccionar un juego...":
             from freeping.data.games_list import load_games
             games = load_games()
             game = games.find_game(game_name)
@@ -475,19 +577,25 @@ class FreePingWindow(QMainWindow):
         if wizard.exec() == SetupWizard.DialogCode.Accepted:
             self.config = AppConfig.load()
             self._update_ui_state()
-            self.log("Setup completed successfully!")
+            self.log("¡Configuración completada exitosamente!")
 
-            vps_ip = self.config.vps_ip or "unknown"
+            vps_ip = self.config.vps_ip or "desconocida"
             self.vps_label.setText(f"VPS: {vps_ip}")
             self.vps_label.setStyleSheet("font-size: 12px; color: #4CAF50;")
 
+            # Actualizar región
+            if self.config.vps_region:
+                idx = self.region_combo.findData(self.config.vps_region)
+                if idx >= 0:
+                    self.region_combo.setCurrentIndex(idx)
+
             QMessageBox.information(
-                self, "Setup Complete",
-                "Your VPS has been provisioned!\n\n"
-                "Next steps:\n"
-                "1. Select a game from the dropdown\n"
-                "2. Click 'Activate Tunnel'\n"
-                "3. FreePing will test your improvement automatically",
+                self, "Configuración Completada",
+                "¡Tu VPS ha sido aprovisionado!\n\n"
+                "Próximos pasos:\n"
+                "1. Selecciona un juego del menú desplegable\n"
+                "2. Haz clic en 'Activar Túnel'\n"
+                "3. FreePing probará tu mejora automáticamente",
             )
 
     def _open_settings(self) -> None:
@@ -496,7 +604,7 @@ class FreePingWindow(QMainWindow):
         if dialog.exec() == SettingsDialog.DialogCode.Accepted:
             self.config = AppConfig.load()
             self._update_ui_state()
-            self.log("Settings saved.")
+            self.log("Configuración guardada.")
 
     def _update_ui_state(self) -> None:
         is_active = self._tunnel_state == TunnelState.ACTIVE
@@ -504,9 +612,9 @@ class FreePingWindow(QMainWindow):
         if is_active:
             self.status_icon.setText("●")
             self.status_icon.setStyleSheet("font-size: 28px; color: #4CAF50;")
-            self.status_label.setText("Connected")
+            self.status_label.setText("Conectado")
             self.status_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #4CAF50;")
-            self.btn_toggle.setText("Deactivate Tunnel")
+            self.btn_toggle.setText("Desactivar Túnel")
             self.btn_toggle.setStyleSheet(
                 "QPushButton {"
                 "  font-size: 15px; font-weight: bold; border-radius: 8px;"
@@ -518,13 +626,13 @@ class FreePingWindow(QMainWindow):
             self.status_icon.setStyleSheet("font-size: 28px; color: #f44336;")
             self.status_label.setText("Error")
             self.status_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #f44336;")
-            self.btn_toggle.setText("Retry")
+            self.btn_toggle.setText("Reintentar")
         else:
             self.status_icon.setText("○")
             self.status_icon.setStyleSheet("font-size: 28px; color: #888;")
-            self.status_label.setText("Inactive")
+            self.status_label.setText("Inactivo")
             self.status_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #888;")
-            self.btn_toggle.setText("Activate Tunnel")
+            self.btn_toggle.setText("Activar Túnel")
 
         is_configured = self.config.is_configured()
         self.btn_toggle.setEnabled(is_configured)
@@ -546,20 +654,18 @@ class FreePingWindow(QMainWindow):
 
     def _show_about(self) -> None:
         QMessageBox.about(
-            self, "About FreePing",
+            self, "Acerca de FreePing",
             "<h2>FreePing v0.1.0</h2>"
-            "<p>Your personal, free, self-hosted gaming VPN.</p>"
-            "<p>Uses WireGuard over Oracle Cloud free tier<br>"
-            "to reduce gaming latency.</p>"
+            "<p>Tu VPN personal, gratuita y auto-gestionada para gaming.</p>"
+            "<p>Usa WireGuard sobre Oracle Cloud free tier<br>"
+            "para reducir tu latencia de juego.</p>"
             "<hr>"
-            "<p>Built with Python 3.12 + PySide6</p>"
-            "<p>100% free forever.</p>"
-            "<p>Created by Diego Galeano</p>"
+            "<p>Creado con Python 3.12 + PySide6</p>"
+            "<p>100% gratis para siempre.</p>"
         )
 
     @typing.override
-    @typing.override
-    def showEvent(self, event) -> None:
+    def showEvent(self, event: object) -> None:
         super().showEvent(event)
         if self._first_show and not self.config.is_configured():
             self._first_show = False
@@ -572,11 +678,22 @@ class FreePingWindow(QMainWindow):
             self.hide()
             self.tray_icon.showMessage(
                 "FreePing",
-                "FreePing is still running in the system tray.",
+                "FreePing sigue ejecutándose en la bandeja del sistema.",
             )
             event.ignore()
         else:
-            self._timer.stop()
-            if self._event_loop:
-                self._event_loop.stop()
+            self._cleanup()
             event.accept()
+
+    def _cleanup(self) -> None:
+        if self._watchdog:
+            async def stop_watchdog():
+                await self._watchdog.stop()
+            try:
+                asyncio.ensure_future(stop_watchdog())
+            except Exception:
+                pass
+            self._watchdog = None
+        self._timer.stop()
+        if self._event_loop:
+            self._event_loop.stop()

@@ -23,10 +23,10 @@ def window(qtbot: QtBot):
 class TestMainWindowLogic:
     def test_initial_state_label(self, window) -> None:
         assert window._tunnel_state == TunnelState.INACTIVE
-        assert "Inactive" in window.status_label.text()
+        assert "Inactivo" in window.status_label.text()
 
     def test_toggle_button_text_when_inactive(self, window) -> None:
-        assert "Activate" in window.btn_toggle.text()
+        assert "Activar" in window.btn_toggle.text()
 
     def test_toggle_button_disabled_without_config(self, window) -> None:
         if not window.config.is_configured():
@@ -53,7 +53,7 @@ class TestTrayIcon:
     @pytest.mark.skipif(not _has_system_tray, reason="No system tray available")
     def test_tray_state_update_active(self, window) -> None:
         window.tray_icon.update_state(TunnelState.ACTIVE)
-        assert "Connected" in window.tray_icon.action_status.text()
+        assert "Conectado" in window.tray_icon.action_status.text()
 
     @pytest.mark.skipif(not _has_system_tray, reason="No system tray available")
     def test_tray_state_update_error(self, window) -> None:
@@ -63,4 +63,4 @@ class TestTrayIcon:
     @pytest.mark.skipif(not _has_system_tray, reason="No system tray available")
     def test_tray_state_update_inactive(self, window) -> None:
         window.tray_icon.update_state(TunnelState.INACTIVE)
-        assert "Inactive" in window.tray_icon.action_status.text()
+        assert "Inactivo" in window.tray_icon.action_status.text()

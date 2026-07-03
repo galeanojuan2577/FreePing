@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import typing
 from pathlib import Path
 
@@ -39,28 +40,32 @@ class ProvisioningWorker(QThread):
         super().__init__()
         self.credentials = credentials
         self.region = region
+        self._created_instance_id: str | None = None
 
     def run(self) -> None:
+        loop = None
+        client = None
         try:
             import asyncio
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
-            self.progress.emit("Generating WireGuard keys...", 10)
+            self.progress.emit("Generando llaves WireGuard...", 10)
             from freeping.provisioning.oci_client import OciClient, WireGuardKeyPair
-            keys = WireGuardKeyPair.generate()
+            server_keys = WireGuardKeyPair.generate()
+            client_keys = WireGuardKeyPair.generate()
 
-            self.progress.emit("Connecting to Oracle Cloud...", 20)
+            self.progress.emit("Conectando con Oracle Cloud...", 20)
             client = OciClient(self.credentials)
 
-            self.progress.emit("Creating VCN and network...", 30)
+            self.progress.emit("Creando VCN y red...", 30)
 
-            self.progress.emit("Launching Ampere A1 instance...", 50)
+            self.progress.emit("Creando instancia Ampere A1...", 50)
             from freeping.provisioning.cloud_init import CloudInitGenerator
             cloud_gen = CloudInitGenerator(
-                server_private_key=keys.private_key,
-                server_public_key=keys.public_key,
-                client_public_key=keys.public_key,
+                server_private_key=server_keys.private_key,
+                server_public_key=server_keys.public_key,
+                client_public_key=client_keys.public_key,
             )
             cloud_init_yaml = cloud_gen.render()
 
@@ -71,8 +76,9 @@ class ProvisioningWorker(QThread):
                     compartment_id=self.credentials.tenancy_ocid,
                 )
             )
+            self._created_instance_id = instance.id
 
-            self.progress.emit("Waiting for instance to be ready...", 70)
+            self.progress.emit("Esperando que la instancia esté lista...", 70)
             import time
             time.sleep(10)
 
@@ -80,28 +86,39 @@ class ProvisioningWorker(QThread):
                 client.get_instance(instance.id)
             )
 
-            self.progress.emit("Saving configuration...", 90)
+            self.progress.emit("Guardando configuración...", 90)
             result = {
                 "instance_id": instance.id,
                 "public_ip": instance.public_ip,
                 "region": self.region,
-                "server_private_key": keys.private_key,
-                "server_public_key": keys.public_key,
-                "client_private_key": keys.private_key,
-                "client_public_key": keys.public_key,
+                "server_private_key": server_keys.private_key,
+                "server_public_key": server_keys.public_key,
+                "client_private_key": client_keys.private_key,
+                "client_public_key": client_keys.public_key,
             }
 
-            loop.close()
-            self.progress.emit("Done!", 100)
+            self.progress.emit("¡Completado!", 100)
             self.finished.emit(result)
         except Exception as e:
+            self._cleanup_orphan_resources(client, loop)
             self.error.emit(str(e))
+        finally:
+            if loop:
+                loop.close()
+
+    def _cleanup_orphan_resources(self, client: object | None, loop: asyncio.AbstractEventLoop | None) -> None:
+        if not self._created_instance_id or not client or not loop:
+            return
+        try:
+            loop.run_until_complete(client.terminate_instance(self._created_instance_id))
+        except Exception:
+            pass
 
 
 class SetupWizard(QWizard):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("FreePing Setup Wizard")
+        self.setWindowTitle("Asistente de Configuración FreePing")
         self.setMinimumSize(680, 580)
         self.setWizardStyle(QWizard.WizardStyle.ModernStyle)
 
@@ -124,26 +141,26 @@ class SetupWizard(QWizard):
 class WelcomePage(QWizardPage):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setTitle("Welcome to FreePing")
-        self.setSubTitle("Your personal, free, self-hosted gaming VPN")
+        self.setTitle("Bienvenido a FreePing")
+        self.setSubTitle("Tu VPN personal, gratuita y auto-gestionada para gaming")
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
         layout.addWidget(QLabel(
-            "FreePing creates a free WireGuard VPN server on Oracle Cloud's Always Free Tier "
-            "to reduce your gaming latency. No credit card required."
+            "FreePing crea un servidor WireGuard gratuito en Oracle Cloud Always Free Tier "
+            "para reducir tu latencia de juego. No requiere tarjeta de crédito."
         ))
 
         steps_box = QLabel(
             "<hr>"
-            "<b>What we'll do in 5 minutes:</b><br><br>"
-            "1. <b>Create</b> an Oracle Cloud account (if you don't have one)<br>"
-            "2. <b>Generate</b> an API key for FreePing to manage your cloud resources<br>"
-            "3. <b>Deploy</b> a free VM (4 ARM cores, 24 GB RAM) with WireGuard pre-installed<br>"
-            "4. <b>Connect</b> your gaming traffic through the encrypted tunnel<br><br>"
+            "<b>Qué haremos en 5 minutos:</b><br><br>"
+            "1. <b>Crea</b> una cuenta en Oracle Cloud (si no tienes una)<br>"
+            "2. <b>Genera</b> una llave API para que FreePing administre tus recursos<br>"
+            "3. <b>Despliega</b> una VM gratuita (4 núcleos ARM, 24 GB RAM) con WireGuard preinstalado<br>"
+            "4. <b>Conecta</b> tu tráfico de juego a través del túnel cifrado<br><br>"
             f'<a href="{ORACLE_SIGNUP_URL}" style="color: #4CAF50;">'
-            "Click here to create your free Oracle Cloud account</a>"
+            "Haz clic aquí para crear tu cuenta gratuita de Oracle Cloud</a>"
             "<hr>"
         )
         steps_box.setOpenExternalLinks(True)
@@ -151,15 +168,15 @@ class WelcomePage(QWizardPage):
         layout.addWidget(steps_box)
 
         prereqs = QLabel(
-            "<b>Requirements:</b><br>"
-            "• Oracle Cloud account (free at cloud.oracle.com)<br>"
-            "• Python 3.12 or later<br>"
-            "• Internet connection<br><br>"
-            "<b>What you get:</b><br>"
-            "• VM.Standard.A1.Flex (4 OCPU, 24 GB RAM) — <b>free forever</b><br>"
-            "• WireGuard VPN with split tunneling (game traffic only)<br>"
-            "• Auto-reconnect if connection drops<br>"
-            "• System tray integration for quick access"
+            "<b>Requisitos:</b><br>"
+            "• Cuenta de Oracle Cloud (gratis en cloud.oracle.com)<br>"
+            "• Python 3.12 o superior<br>"
+            "• Conexión a internet<br><br>"
+            "<b>Qué obtienes:</b><br>"
+            "• VM.Standard.A1.Flex (4 OCPU, 24 GB RAM) — <b>gratis para siempre</b><br>"
+            "• WireGuard VPN con split tunneling (solo tráfico de juego)<br>"
+            "• Reconexión automática si la conexión se pierde<br>"
+            "• Integración con la bandeja del sistema"
         )
         prereqs.setWordWrap(True)
         prereqs.setStyleSheet("padding: 8px; background: #f0f7f0; border-radius: 4px;")
@@ -171,30 +188,30 @@ class WelcomePage(QWizardPage):
 class RegionPage(QWizardPage):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setTitle("Select Region")
-        self.setSubTitle("Choose the Oracle Cloud region closest to you.")
+        self.setTitle("Seleccionar Región")
+        self.setSubTitle("Elige la región de Oracle Cloud más cercana a ti.")
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(
-            "Pick the region geographically closest to your physical location "
-            "for the lowest possible latency."
+            "Elige la región geográficamente más cercana a tu ubicación física "
+            "para obtener la latencia más baja posible."
         ))
 
         self.region_combo = QComboBox()
         from freeping.provisioning.oci_client import OCI_REGIONS
         for key, name in sorted(OCI_REGIONS.items()):
-            self.region_combo.addItem(name, key)
+            self.region_combo.addItem(f"{name} ({key})", key)
         self.region_combo.setCurrentIndex(
             list(OCI_REGIONS.keys()).index("sa-saopaulo-1")
             if "sa-saopaulo-1" in OCI_REGIONS else 0
         )
-        layout.addWidget(self.region_combo)
 
         self.region_combo.setToolTip(
-            "Choose the region nearest to you. "
-            "Each region has free tier eligibility. "
-            "São Paulo (sa-saopaulo-1) is pre-selected for South America."
+            "Elige la región más cercana a ti. "
+            "Cada región tiene elegibilidad gratuita. "
+            "São Paulo (sa-saopaulo-1) está preseleccionada para Sudamérica."
         )
+        layout.addWidget(self.region_combo)
 
         layout.addStretch()
 
@@ -205,23 +222,23 @@ class RegionPage(QWizardPage):
 class CredentialsPage(QWizardPage):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setTitle("Oracle Cloud API Credentials")
-        self.setSubTitle("Grant FreePing permission to create resources in your account.")
+        self.setTitle("Credenciales de API de Oracle Cloud")
+        self.setSubTitle("Dale permiso a FreePing para crear recursos en tu cuenta.")
 
         layout = QVBoxLayout(self)
         layout.setSpacing(8)
 
         api_guide = QLabel(
-            '<b>Step-by-step guide to get your API credentials:</b><br><br>'
-            f'1. Sign in to <a href="{ORACLE_CONSOLE_URL}" style="color: #4CAF50;">cloud.oracle.com</a><br>'
-            '2. Click your profile icon (top-right) → <b>My Profile</b><br>'
-            '3. Go to <b>API Keys</b> on the left sidebar<br>'
-            '4. Click <b>"Add API Key"</b> → select <b>"Generate API Key Pair"</b><br>'
-            '5. Download the <b>private key (.pem)</b> file<br>'
-            '6. Click <b>"Add"</b> — a configuration preview will appear<br>'
-            '7. Copy the values from that preview into the fields below<br><br>'
+            '<b>Guía paso a paso para obtener tus credenciales API:</b><br><br>'
+            f'1. Inicia sesión en <a href="{ORACLE_CONSOLE_URL}" style="color: #4CAF50;">cloud.oracle.com</a><br>'
+            '2. Haz clic en tu icono de perfil (arriba a la derecha) → <b>Mi Perfil</b><br>'
+            '3. Ve a <b>Llaves API</b> en la barra lateral izquierda<br>'
+            '4. Haz clic en <b>"Agregar Llave API"</b> → selecciona <b>"Generar Par de Llaves"</b><br>'
+            '5. Descarga el archivo <b>llave privada (.pem)</b><br>'
+            '6. Haz clic en <b>"Agregar"</b> — aparecerá una vista previa<br>'
+            '7. Copia los valores de esa vista previa en los campos de abajo<br><br>'
             f'<a href="{ORACLE_API_KEY_GUIDE}" style="color: #666;">'
-            ' Full API Key documentation (opens in browser)</a>'
+            ' Documentación completa de Llaves API (se abre en el navegador)</a>'
         )
         api_guide.setOpenExternalLinks(True)
         api_guide.setWordWrap(True)
@@ -229,21 +246,21 @@ class CredentialsPage(QWizardPage):
         layout.addWidget(api_guide)
 
         btn_layout = QHBoxLayout()
-        self.btn_upload = QPushButton("Upload PEM File...")
-        self.btn_upload.setToolTip("Load an existing API key file (.pem) you downloaded from Oracle Cloud")
+        self.btn_upload = QPushButton("Subir Archivo PEM...")
+        self.btn_upload.setToolTip("Cargar un archivo de llave API (.pem) descargado de Oracle Cloud")
         btn_layout.addWidget(self.btn_upload)
-        self.btn_generate = QPushButton("Generate New Key")
+        self.btn_generate = QPushButton("Generar Nueva Llave")
         self.btn_generate.setToolTip(
-            "Create a new API key pair now (upload the public part to Oracle Cloud)"
+            "Crear un nuevo par de llaves API ahora (sube la parte pública a Oracle Cloud)"
         )
         btn_layout.addWidget(self.btn_generate)
         layout.addLayout(btn_layout)
 
         self.key_display = QTextEdit()
-        self.key_display.setPlaceholderText("API key content will appear here...")
+        self.key_display.setPlaceholderText("El contenido de la llave API aparecerá aquí...")
         self.key_display.setMaximumHeight(100)
         self.key_display.setToolTip(
-            "The private key contents (-----BEGIN PRIVATE KEY----- ... -----END PRIVATE KEY-----)"
+            "El contenido de la llave privada (-----BEGIN PRIVATE KEY----- ... -----END PRIVATE KEY-----)"
         )
         layout.addWidget(self.key_display)
 
@@ -251,23 +268,23 @@ class CredentialsPage(QWizardPage):
 
         self.user_ocid = QLineEdit()
         self.user_ocid.setPlaceholderText("ocid1.user.oc1..xxxxxxxxxxxx")
-        self.user_ocid.setToolTip("Your user's OCID. Found in: Profile → My Profile → OCID (click 'Copy')")
+        self.user_ocid.setToolTip("Tu OCID de usuario. En: Perfil → Mi Perfil → OCID (clic en 'Copiar')")
         self.user_ocid.textChanged.connect(self._validate)
-        form.addRow(self._field_label("User OCID:"), self.user_ocid)
+        form.addRow(self._field_label("OCID de Usuario:"), self.user_ocid)
 
         self.tenancy_ocid = QLineEdit()
         self.tenancy_ocid.setPlaceholderText("ocid1.tenancy.oc1..xxxxxxxxxxxx")
-        self.tenancy_ocid.setToolTip("Your tenancy's OCID. Found in: Profile → Tenancy → OCID")
+        self.tenancy_ocid.setToolTip("El OCID de tu tenencia. En: Perfil → Tenencia → OCID")
         self.tenancy_ocid.textChanged.connect(self._validate)
-        form.addRow(self._field_label("Tenancy OCID:"), self.tenancy_ocid)
+        form.addRow(self._field_label("OCID de Tenencia:"), self.tenancy_ocid)
 
         self.fingerprint = QLineEdit()
         self.fingerprint.setPlaceholderText("12:34:56:78:90:ab:cd:ef:01:23:45:67:89:0a:bc:de:f0:12:34:56")
         self.fingerprint.setToolTip(
-            "The fingerprint of your uploaded API key. Found in: Profile → API Keys"
+            "La huella digital de tu llave API. En: Perfil → Llaves API"
         )
         self.fingerprint.textChanged.connect(self._validate)
-        form.addRow(self._field_label("Fingerprint:"), self.fingerprint)
+        form.addRow(self._field_label("Huella Digital:"), self.fingerprint)
 
         layout.addLayout(form)
 
@@ -291,16 +308,16 @@ class CredentialsPage(QWizardPage):
         key_ok = "BEGIN" in self.key_display.toPlainText().strip()
 
         if self.user_ocid.text().strip() and not ocid_ok:
-            self.validation_label.setText("User OCID should start with 'ocid1.user.'")
+            self.validation_label.setText("El OCID de usuario debe comenzar con 'ocid1.user.'")
             self.validation_label.setStyleSheet("color: #e74c3c;")
         elif self.tenancy_ocid.text().strip() and not tenancy_ok:
-            self.validation_label.setText("Tenancy OCID should start with 'ocid1.tenancy.'")
+            self.validation_label.setText("El OCID de tenencia debe comenzar con 'ocid1.tenancy.'")
             self.validation_label.setStyleSheet("color: #e74c3c;")
         elif not key_ok and self.key_display.toPlainText().strip():
-            self.validation_label.setText("Private key should start with '-----BEGIN PRIVATE KEY-----'")
+            self.validation_label.setText("La llave privada debe comenzar con '-----BEGIN PRIVATE KEY-----'")
             self.validation_label.setStyleSheet("color: #e74c3c;")
         else:
-            text = "All fields look good!" if self.isComplete() else "Fill in all fields to continue."
+            text = "¡Todos los campos se ven bien!" if self.isComplete() else "Completa todos los campos para continuar."
             self.validation_label.setText(text)
             color = "#4CAF50" if self.isComplete() else "#666"
             self.validation_label.setStyleSheet(f"color: {color}; font-style: italic;")
@@ -309,7 +326,7 @@ class CredentialsPage(QWizardPage):
 
     def _upload_key(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select API Key", "", "PEM files (*.pem);;All files (*)"
+            self, "Seleccionar Llave API", "", "Archivos PEM (*.pem);;Todos los archivos (*)"
         )
         if path:
             content = Path(path).read_text()
@@ -324,8 +341,8 @@ class CredentialsPage(QWizardPage):
                 self.key_display.setPlainText(content)
                 if not self.fingerprint.text():
                     QMessageBox.information(
-                        self, "Manual Entry",
-                        "Key loaded. Please enter your OCID and fingerprint manually from the Oracle Cloud console.",
+                        self, "Entrada Manual",
+                        "Llave cargada. Ingresa tu OCID y huella digital manualmente desde la consola de Oracle Cloud.",
                     )
 
     def _generate_key(self) -> None:
@@ -334,17 +351,17 @@ class CredentialsPage(QWizardPage):
             priv, pub = KeyManager.generate_oci_api_key()
             self.key_display.setPlainText(priv)
             QMessageBox.information(
-                self, "Key Generated",
-                "New API key generated.\n\n"
-                "Next steps:\n"
-                "1. Go to cloud.oracle.com → Profile → API Keys\n"
-                "2. Click 'Add API Key'\n"
-                "3. Choose 'Paste Public Key' and paste this:\n\n"
+                self, "Llave Generada",
+                "Nueva llave API generada.\n\n"
+                "Próximos pasos:\n"
+                "1. Ve a cloud.oracle.com → Perfil → Llaves API\n"
+                "2. Haz clic en 'Agregar Llave API'\n"
+                "3. Elige 'Pegar Llave Pública' y pega esto:\n\n"
                 f"{pub}\n\n"
-                "4. Click 'Add' and copy the User OCID and Fingerprint from the preview.",
+                "4. Haz clic en 'Agregar' y copia el OCID de Usuario y la Huella Digital de la vista previa.",
             )
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to generate key: {e}")
+            QMessageBox.critical(self, "Error", f"Error al generar la llave: {e}")
 
     def get_credentials(self) -> OciCredentials:
         return OciCredentials(
@@ -367,8 +384,8 @@ class CredentialsPage(QWizardPage):
 class ReviewPage(QWizardPage):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setTitle("Review Configuration")
-        self.setSubTitle("Verify your settings before provisioning.")
+        self.setTitle("Revisar Configuración")
+        self.setSubTitle("Verifica tu configuración antes de aprovisionar.")
 
         layout = QVBoxLayout(self)
         self.summary = QLabel()
@@ -376,7 +393,7 @@ class ReviewPage(QWizardPage):
         self.summary.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(self.summary)
 
-        self.keep_conf = QCheckBox("Save configuration for future sessions")
+        self.keep_conf = QCheckBox("Guardar configuración para futuras sesiones")
         self.keep_conf.setChecked(True)
         layout.addWidget(self.keep_conf)
 
@@ -389,27 +406,27 @@ class ReviewPage(QWizardPage):
         region = wizard.get_region()
 
         self.summary.setText(
-            "<b>Region:</b> " + region + "<br>"
-            "<b>User OCID:</b> " + creds.user_ocid[:20] + "...<br>"
-            "<b>Tenancy OCID:</b> " + creds.tenancy_ocid[:20] + "...<br>"
-            "<b>Fingerprint:</b> " + creds.fingerprint[:20] + "...<br><br>"
-            "<b>What will be created:</b><br>"
+            "<b>Región:</b> " + region + "<br>"
+            "<b>OCID de Usuario:</b> " + creds.user_ocid[:20] + "...<br>"
+            "<b>OCID de Tenencia:</b> " + creds.tenancy_ocid[:20] + "...<br>"
+            "<b>Huella Digital:</b> " + creds.fingerprint[:20] + "...<br><br>"
+            "<b>Qué se creará:</b><br>"
             "• VM.Standard.A1.Flex (4 OCPU, 24 GB RAM)<br>"
-            "• WireGuard VPN server (port 51820/UDP)<br>"
-            "• Keep-alive service (prevents idle shutdown)<br>"
-            "• Firewall rules for gaming traffic only<br><br>"
-            "<b>Cost: $0.00/month — Always Free Tier</b><br>"
+            "• Servidor WireGuard (puerto 51820/UDP)<br>"
+            "• Servicio keep-alive (evita apagado por inactividad)<br>"
+            "• Reglas de firewall solo para tráfico de juego<br><br>"
+            "<b>Costo: $0.00/mes — Siempre Gratis</b><br>"
         )
 
 
 class ProgressPage(QWizardPage):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setTitle("Provisioning Your VPS")
-        self.setSubTitle("Creating your free cloud VM... This may take 2-3 minutes.")
+        self.setTitle("Aprovisionando tu VPS")
+        self.setSubTitle("Creando tu VM gratuita en la nube... Esto puede tomar 2-3 minutos.")
 
         layout = QVBoxLayout(self)
-        self.status_label = QLabel("Starting...")
+        self.status_label = QLabel("Iniciando...")
         self.status_label.setStyleSheet("font-size: 14px; font-weight: bold;")
         layout.addWidget(self.status_label)
 
@@ -465,7 +482,7 @@ class ProgressPage(QWizardPage):
         self.log_area.append(f"[{pct}%] {msg}")
 
     def _on_finished(self, result: dict) -> None:
-        self.log_area.append("Done!")
+        self.log_area.append("¡Completado!")
         config = AppConfig.load()
         config.vps_ip = result.get("public_ip", "")
         config.vps_id = result.get("instance_id", "")
@@ -484,7 +501,7 @@ class ProgressPage(QWizardPage):
 
     def _on_error(self, msg: str) -> None:
         self.log_area.append(f"ERROR: {msg}")
-        QMessageBox.critical(self, "Provisioning Error", msg)
+        QMessageBox.critical(self, "Error de Aprovisionamiento", msg)
 
     @typing.override
     def isComplete(self) -> bool:
@@ -494,8 +511,8 @@ class ProgressPage(QWizardPage):
 class CompletePage(QWizardPage):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setTitle("Setup Complete!")
-        self.setSubTitle("Your FreePing VPS is ready to use.")
+        self.setTitle("¡Configuración Completada!")
+        self.setSubTitle("Tu VPS de FreePing está listo para usar.")
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
@@ -506,15 +523,15 @@ class CompletePage(QWizardPage):
         layout.addWidget(self.summary)
 
         next_steps = QLabel(
-            "<b>Next steps:</b><br>"
-            "1. Click <b>Finish</b> to return to the main window<br>"
-            "2. Select a game from the dropdown (or enter custom IPs)<br>"
-            "3. Click <b>Activate Tunnel</b> — FreePing will test your improvement automatically!<br>"
-            "4. Play with reduced latency 🎮<br><br>"
-            "<b>Tips:</b><br>"
-            "• Keep FreePing running in the system tray while gaming<br>"
-            "• Use the 'Test Improvement' button anytime to compare latency<br>"
-            "• Run the setup wizard again anytime from File → Run Setup Wizard"
+            "<b>Próximos pasos:</b><br>"
+            "1. Haz clic en <b>Finalizar</b> para volver a la ventana principal<br>"
+            "2. Selecciona un juego del menú desplegable (o ingresa IPs personalizadas)<br>"
+            "3. Haz clic en <b>Activar Túnel</b> — FreePing probará tu mejora automáticamente<br>"
+            "4. ¡Juega con latencia reducida! 🎮<br><br>"
+            "<b>Consejos:</b><br>"
+            "• Mantén FreePing ejecutándose en la bandeja del sistema mientras juegas<br>"
+            "• Usa el botón 'Probar Mejora' en cualquier momento para comparar latencia<br>"
+            "• Ejecuta el asistente de nuevo desde Archivo → Ejecutar Asistente de Configuración"
         )
         next_steps.setWordWrap(True)
         next_steps.setStyleSheet("padding: 8px; background: #f0f7f0; border-radius: 4px;")
@@ -528,10 +545,10 @@ class CompletePage(QWizardPage):
         result = wizard._provisioning_result or {}
         ip = result.get("public_ip", "N/A")
         self.summary.setText(
-            "<b>VPS Public IP:</b> " + ip + "<br>"
-            "<b>Status:</b> Running<br>"
-            "<b>WireGuard Port:</b> 51820/UDP<br>"
-            "<b>Region:</b> " + result.get("region", "N/A") + "<br><br>"
-            "<i>Your instance is booting with WireGuard pre-installed. "
-            "It may take 60 seconds to finish initial setup.</i>"
+            "<b>IP Pública del VPS:</b> " + ip + "<br>"
+            "<b>Estado:</b> Ejecutándose<br>"
+            "<b>Puerto WireGuard:</b> 51820/UDP<br>"
+            "<b>Región:</b> " + result.get("region", "N/A") + "<br><br>"
+            "<i>Tu instancia está iniciando con WireGuard preinstalado. "
+            "Puede tomar hasta 60 segundos completar la configuración inicial.</i>"
         )

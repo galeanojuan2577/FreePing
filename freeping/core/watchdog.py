@@ -68,7 +68,7 @@ class Watchdog:
                         self._set_state(TunnelState.ERROR)
                         if self.on_reconnect:
                             try:
-                                await asyncio.to_thread(self.on_reconnect)
+                                self.on_reconnect()
                             except Exception as e:
                                 logger.error(f"Watchdog: reconnect handler failed: {e}")
                         self._failures = 0
@@ -150,7 +150,8 @@ class KeepAlive:
                 await asyncio.sleep(self.interval)
             except asyncio.CancelledError:
                 break
-            except Exception:
+            except Exception as e:
+                logger.warning("KeepAlive: ping failed: %s", e)
                 await asyncio.sleep(self.interval)
 
     async def _ping(self) -> None:

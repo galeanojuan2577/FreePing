@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import platform
 import re
 
 from freeping.core.models import LatencyResult
+
+logger = logging.getLogger("freeping.ping")
 
 
 class PingError(Exception):
@@ -20,7 +23,8 @@ class PingManager:
             if self._is_windows:
                 return await self._ping_windows(host, count)
             return await self._ping_posix(host, count)
-        except Exception:
+        except Exception as e:
+            logger.debug("Ping to %s failed: %s", host, e)
             return None
 
     async def measure_game_server(self, game_ips: list[str]) -> float | None:

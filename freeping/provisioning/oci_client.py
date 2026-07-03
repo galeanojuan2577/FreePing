@@ -39,6 +39,7 @@ OCI_REGIONS: dict[str, str] = {
     "eu-london-1": "London (EU)",
     "eu-paris-1": "Paris (EU)",
     "eu-amsterdam-1": "Amsterdam (EU)",
+    "sa-bogota-1": "Bogotá (Colombia)",
     "sa-saopaulo-1": "São Paulo (South America)",
     "ap-mumbai-1": "Mumbai (Asia)",
     "ap-singapore-1": "Singapore (Asia)",
@@ -268,17 +269,18 @@ class OciClient:
 
     def _get_ubuntu_image_id(self) -> str:
         images = {
-            "us-ashburn-1": "ocid1.image.oc1.iad.aaaaaaaa",
-            "us-phoenix-1": "ocid1.image.oc1.phx.aaaaaaaa",
-            "eu-frankfurt-1": "ocid1.image.oc1.eu-frankfurt-1.aaaaaaaa",
-            "eu-london-1": "ocid1.image.oc1.eu-london-1.aaaaaaaa",
-            "eu-paris-1": "ocid1.image.oc1.eu-paris-1.aaaaaaaa",
-            "eu-amsterdam-1": "ocid1.image.oc1.eu-amsterdam-1.aaaaaaaa",
-            "sa-saopaulo-1": "ocid1.image.oc1.sa-saopaulo-1.aaaaaaaa",
-            "ap-mumbai-1": "ocid1.image.oc1.ap-mumbai-1.aaaaaaaa",
-            "ap-singapore-1": "ocid1.image.oc1.ap-singapore-1.aaaaaaaa",
-            "ap-tokyo-1": "ocid1.image.oc1.ap-tokyo-1.aaaaaaaa",
-            "ap-sydney-1": "ocid1.image.oc1.ap-sydney-1.aaaaaaaa",
+            "us-ashburn-1": "ocid1.image.oc1.iad.aaaaaaaaigqvtzzzhjq6otqvso3bzwmc5dwr7kz3krrgtj2sqnolsa5g4rwq",
+            "us-phoenix-1": "ocid1.image.oc1.phx.aaaaaaaavjndib52k65rpshkotxwjxv5tvc5qa4k36dwiajugta65xv6raaq",
+            "eu-frankfurt-1": "ocid1.image.oc1.eu-frankfurt-1.aaaaaaaayl6kny3zvygccnogogfm544dd3qvikkj6enbz4eup7byfvdw2a5a",
+            "eu-london-1": "ocid1.image.oc1.uk-london-1.aaaaaaaaznecwbrmjyjdqk4xdyyppyygnmmbsnb25q44dzrwo6d2szhsv6da",
+            "eu-paris-1": "ocid1.image.oc1.eu-paris-1.aaaaaaaaophdxcybvl2h6am42jtstxiqllolgwsmxzxxbujhdydrki2aowpq",
+            "eu-amsterdam-1": "ocid1.image.oc1.eu-amsterdam-1.aaaaaaaak36bjmrftqb5fqdnkiv36vfjhmcjmfibd3ywtfvfjtndbu6zepta",
+            "sa-bogota-1": "ocid1.image.oc1.sa-bogota-1.aaaaaaaa4gmr625mzitc2swhwairdqfl642pjf4trvcatgci3isevpsob45q",
+            "sa-saopaulo-1": "ocid1.image.oc1.sa-saopaulo-1.aaaaaaaa6dm52etzxfkbo2bhm3puuc54yrk5yctvvzyakcxbtix4n23247yq",
+            "ap-mumbai-1": "ocid1.image.oc1.ap-mumbai-1.aaaaaaaaccdubkruxb4xljfqnahwx6dy2kgi7tc4mqpzp24t3tqoo3svqlva",
+            "ap-singapore-1": "ocid1.image.oc1.ap-singapore-1.aaaaaaaa6rpevbhllh3j6bx64bzxsiwhzjfzqjrojqomrmrfgaqbzzifmcnq",
+            "ap-tokyo-1": "ocid1.image.oc1.ap-tokyo-1.aaaaaaaavy5wfuezcfzuuiryv26zepg375cfekt7znt3u77qcycs7yvyrxra",
+            "ap-sydney-1": "ocid1.image.oc1.ap-sydney-1.aaaaaaaaque5khwgpvd467sootlw5q4evgcbu4i7xy7zk762ir5ihd7776kq",
         }
         return images.get(
             self.creds.region,

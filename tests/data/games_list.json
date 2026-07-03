@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "games": [
+    {
+      "name": "TestGame1",
+      "protocols": ["udp"],
+      "ip_ranges": ["10.0.0.0/8"]
+    },
+    {
+      "name": "TestGame2",
+      "protocols": ["tcp"],
+      "ip_ranges": ["192.168.0.0/16"]
+    }
+  ]
+}
