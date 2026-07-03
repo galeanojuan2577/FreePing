@@ -363,7 +363,10 @@ class FreePingWindow(QMainWindow):
     def _auto_run_test(self) -> None:
         game_ips = self._get_selected_ips()
         if not game_ips:
-            self.log("Auto-test: Ningún juego seleccionado. Selecciona un juego y haz clic en 'Probar Ping' para ver la mejora.")
+            self.log(
+                "Auto-test: Ningún juego seleccionado. "
+                "Selecciona un juego y haz clic en 'Probar Ping' para ver la mejora."
+            )
             return
 
         self.log("Probando mejora de ping automáticamente...")

@@ -317,7 +317,11 @@ class CredentialsPage(QWizardPage):
             self.validation_label.setText("La llave privada debe comenzar con '-----BEGIN PRIVATE KEY-----'")
             self.validation_label.setStyleSheet("color: #e74c3c;")
         else:
-            text = "¡Todos los campos se ven bien!" if self.isComplete() else "Completa todos los campos para continuar."
+            text = (
+                "¡Todos los campos se ven bien!"
+                if self.isComplete()
+                else "Completa todos los campos para continuar."
+            )
             self.validation_label.setText(text)
             color = "#4CAF50" if self.isComplete() else "#666"
             self.validation_label.setStyleSheet(f"color: {color}; font-style: italic;")

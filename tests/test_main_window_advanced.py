@@ -1,3 +1,4 @@
+# ruff: noqa: F821
 from __future__ import annotations
 
 import json
@@ -201,7 +202,11 @@ class TestToggleTunnel:
 
 class TestActivateDeactivateTunnel:
     @patch("freeping.core.tunnel.TunnelManager")
-    def test_activate_tunnel_async_success(self, mock_tunnel_cls, configured_window: FreePingWindow, temp_config_dir: Path) -> None:
+    def test_activate_tunnel_async_success(
+        self, mock_tunnel_cls,
+        configured_window: FreePingWindow,
+        temp_config_dir: Path,
+    ) -> None:
         mock_tunnel = MagicMock()
         mock_tunnel.start = AsyncMock()
         mock_tunnel_cls.return_value = mock_tunnel
@@ -216,7 +221,11 @@ class TestActivateDeactivateTunnel:
         assert "activado exitosamente" in configured_window.log_output.toPlainText().lower()
 
     @patch("freeping.core.tunnel.TunnelManager")
-    def test_activate_tunnel_async_failure(self, mock_tunnel_cls, configured_window: FreePingWindow, temp_config_dir: Path) -> None:
+    def test_activate_tunnel_async_failure(
+        self, mock_tunnel_cls,
+        configured_window: FreePingWindow,
+        temp_config_dir: Path,
+    ) -> None:
         mock_tunnel = MagicMock()
         mock_tunnel.start = AsyncMock(side_effect=RuntimeError("Connection refused"))
         mock_tunnel_cls.return_value = mock_tunnel
@@ -231,7 +240,11 @@ class TestActivateDeactivateTunnel:
         assert "Error al activar" in configured_window.log_output.toPlainText()
 
     @patch("freeping.core.tunnel.TunnelManager")
-    def test_activate_tunnel_auto_run_test_with_ips(self, mock_tunnel_cls, configured_window: FreePingWindow, temp_config_dir: Path) -> None:
+    def test_activate_tunnel_auto_run_test_with_ips(
+        self, mock_tunnel_cls,
+        configured_window: FreePingWindow,
+        temp_config_dir: Path,
+    ) -> None:
         mock_tunnel = MagicMock()
         mock_tunnel.start = AsyncMock()
         mock_tunnel_cls.return_value = mock_tunnel
@@ -248,7 +261,11 @@ class TestActivateDeactivateTunnel:
         assert "Probando mejora de ping" in configured_window.log_output.toPlainText()
 
     @patch("freeping.core.tunnel.TunnelManager")
-    def test_activate_tunnel_sync_wrapper(self, mock_tunnel_cls, configured_window: FreePingWindow, temp_config_dir: Path) -> None:
+    def test_activate_tunnel_sync_wrapper(
+        self, mock_tunnel_cls,
+        configured_window: FreePingWindow,
+        temp_config_dir: Path,
+    ) -> None:
         mock_tunnel = MagicMock()
         mock_tunnel.start = AsyncMock()
         mock_tunnel_cls.return_value = mock_tunnel
@@ -447,7 +464,10 @@ class TestGetSelectedIps:
     def test_game_selected_returns_ip_ranges(self, mock_load_games, window: FreePingWindow) -> None:
         from freeping.core.models import Game, GamesList
 
-        mock_games_list = GamesList(version=1, games=[Game(name="TestGame", ip_ranges=["10.0.0.0/8", "192.168.0.0/16"])])
+        mock_games_list = GamesList(
+            version=1,
+            games=[Game(name="TestGame", ip_ranges=["10.0.0.0/8", "192.168.0.0/16"])],
+        )
         mock_load_games.return_value = mock_games_list
 
         window.custom_ip_input.clear()

@@ -97,7 +97,10 @@ class TestOciClientAdvanced:
         with mock.patch("httpx.AsyncClient") as m:
             instance_obj = m.return_value.__aenter__.return_value
             instance_obj.get = mock.AsyncMock(side_effect=[
-                _mock_response(200, {"id": "inst-1", "lifecycleState": "RUNNING", "compartmentId": "comp-1", "displayName": "test"}),
+                _mock_response(200, {
+                    "id": "inst-1", "lifecycleState": "RUNNING",
+                    "compartmentId": "comp-1", "displayName": "test",
+                }),
                 _mock_response(200, [{"vnicId": "vnic-1", "displayName": "test-vnic"}]),
                 _mock_response(200, {"publicIp": "203.0.113.42"}),
             ])
@@ -113,7 +116,10 @@ class TestOciClientAdvanced:
         with mock.patch("httpx.AsyncClient") as m:
             instance_obj = m.return_value.__aenter__.return_value
             instance_obj.get = mock.AsyncMock(side_effect=[
-                _mock_response(200, {"id": "inst-1", "lifecycleState": "RUNNING", "compartmentId": "comp-1", "displayName": "test"}),
+                _mock_response(200, {
+                    "id": "inst-1", "lifecycleState": "RUNNING",
+                    "compartmentId": "comp-1", "displayName": "test",
+                }),
                 _mock_response(200, {"data": [{"vnicId": "vnic-1"}]}),
                 _mock_response(200, {"publicIp": "203.0.113.99"}),
             ])
@@ -126,7 +132,10 @@ class TestOciClientAdvanced:
         with mock.patch("httpx.AsyncClient") as m:
             instance_obj = m.return_value.__aenter__.return_value
             instance_obj.get = mock.AsyncMock(side_effect=[
-                _mock_response(200, {"id": "inst-1", "lifecycleState": "RUNNING", "compartmentId": "comp-1", "displayName": "test"}),
+                _mock_response(200, {
+                    "id": "inst-1", "lifecycleState": "RUNNING",
+                    "compartmentId": "comp-1", "displayName": "test",
+                }),
                 _mock_response(200, []),
             ])
             result = await client.get_instance("inst-1")
@@ -139,7 +148,10 @@ class TestOciClientAdvanced:
         with mock.patch("httpx.AsyncClient") as m:
             instance_obj = m.return_value.__aenter__.return_value
             instance_obj.get = mock.AsyncMock(side_effect=[
-                _mock_response(200, {"id": "inst-1", "lifecycleState": "RUNNING", "compartmentId": "comp-1", "displayName": "test"}),
+                _mock_response(200, {
+                    "id": "inst-1", "lifecycleState": "RUNNING",
+                    "compartmentId": "comp-1", "displayName": "test",
+                }),
                 _mock_response(200, [{"vnicId": ""}]),
             ])
             result = await client.get_instance("inst-1")
