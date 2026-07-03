@@ -35,11 +35,18 @@ echo.
 echo Generando icono...
 python generate_icon.py
 
+REM ─── Verificar PyInstaller ────────────────────────────────────
+python -m PyInstaller --version >nul 2>nul
+if %errorlevel% neq 0 (
+    echo Instalando PyInstaller...
+    pip install pyinstaller
+)
+
 REM ─── Construir .exe ───────────────────────────────────────────
 echo.
 echo Construyendo ejecutable con PyInstaller...
 cd /d "%~dp0"
-pyinstaller freeping.spec
+python -m PyInstaller freeping.spec
 
 if %errorlevel% neq 0 (
     echo.
