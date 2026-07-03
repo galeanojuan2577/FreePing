@@ -19,7 +19,7 @@ call venv\Scripts\activate.bat
 
 REM Install dependencies
 echo Installing dependencies...
-pip install --quiet pyinstaller PySide6 httpx PyYAML
+pip install --quiet pyinstaller PySide6 httpx PyYAML cryptography
 
 REM Install FreePing
 pip install -e ..

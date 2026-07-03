@@ -18,7 +18,7 @@ source venv/bin/activate
 
 # Install dependencies
 echo "Installing dependencies..."
-pip install --quiet pyinstaller PySide6 httpx PyYAML
+pip install --quiet pyinstaller PySide6 httpx PyYAML cryptography
 
 # Install FreePing
 pip install -e ..
