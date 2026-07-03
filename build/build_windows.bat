@@ -1,26 +1,34 @@
 @echo off
-chcp 65001 >nul
 title FreePing Build — Windows
 echo === FreePing — Build para Windows ===
 echo.
 echo Requisitos:
-echo   - Python 3.12+
+echo   - Python 3.12+ (python --version)
 echo   - PyInstaller (pip install pyinstaller)
 echo   - Opcional: Inno Setup 6+ (https://jrsoftware.org/isdl.php)
 echo.
 
 REM ─── Verificar Python ─────────────────────────────────────────
 where python >nul 2>nul || (
-    echo ERROR: Python no encontrado
-    pause
-    exit /b 1
+    where python3 >nul 2>nul || (
+        echo ERROR: Python no encontrado. Instala Python 3.12+ desde python.org
+        pause
+        exit /b 1
+    )
 )
+
 python --version
 
-REM ─── Instalar dependencias ────────────────────────────────────
-echo.
+REM ─── Instalar PyInstaller si no existe ────────────────────────
+pip show pyinstaller >nul 2>nul
+if %errorlevel% neq 0 (
+    echo Instalando PyInstaller...
+    pip install pyinstaller
+)
+
+REM ─── Instalar resto de dependencias ──────────────────────────
 echo Instalando dependencias...
-pip install pyinstaller PySide6 httpx PyYAML cryptography
+pip install PySide6 httpx PyYAML cryptography
 
 REM ─── Generar icono ────────────────────────────────────────────
 echo.
@@ -34,7 +42,12 @@ cd /d "%~dp0"
 pyinstaller freeping.spec
 
 if %errorlevel% neq 0 (
-    echo ERROR: PyInstaller fallo
+    echo.
+    echo ERROR: PyInstaller fallo. Revisa los mensajes arriba.
+    echo Posibles causas:
+    echo   - PySide6 no se instalo correctamente
+    echo   - Falta Microsoft Visual C++ Redistributable
+    echo   - El PATH no incluye la carpeta de Scripts de Python
     pause
     exit /b 1
 )
