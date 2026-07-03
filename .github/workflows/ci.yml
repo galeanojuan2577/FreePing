@@ -32,8 +32,8 @@ jobs:
       - name: Install system deps for Qt
         run: |
           sudo apt-get update
-          sudo apt-get install -y libegl1-mesa libgl1-mesa-glx libxkbcommon0 \
-            libfontconfig1 libdbus-1-3 libxcb-cursor0
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 \
+            libfontconfig1 libdbus-1-3 libxcb-cursor0 libxcb-xinerama0
       - run: pip install -e ".[gui,dev]"
       - run: QT_QPA_PLATFORM=offscreen python3 -m pytest tests/ -v --tb=short
         env:
@@ -50,8 +50,8 @@ jobs:
       - name: Install system deps for Qt
         run: |
           sudo apt-get update
-          sudo apt-get install -y libegl1-mesa libgl1-mesa-glx libxkbcommon0 \
-            libfontconfig1 libdbus-1-3 libxcb-cursor0
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 \
+            libfontconfig1 libdbus-1-3 libxcb-cursor0 libxcb-xinerama0
       - run: pip install -e ".[gui,dev]"
       - run: QT_QPA_PLATFORM=offscreen python3 -m pytest tests/ --cov=freeping --cov-report=xml --cov-report=term
       - uses: codecov/codecov-action@v4
