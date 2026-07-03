@@ -1,8 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 import platform
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(os.path.dirname(os.path.abspath("freeping.spec"))).parent.resolve()
 
 block_cipher = None
 is_windows = platform.system() == "Windows"
