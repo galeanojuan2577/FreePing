@@ -2,29 +2,25 @@
 # FreePing Build Script — Linux
 set -euo pipefail
 
-echo "=== FreePing Linux Build ==="
+echo "=== FreePing — Build para Linux ==="
 echo ""
+
+cd "$(dirname "$0")"
 
 # Check prerequisites
 command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 not found"; exit 1; }
 
-# Create venv if needed
-if [ ! -d "venv" ]; then
-    echo "Creating build virtual environment..."
-    python3 -m venv venv
-fi
-
-source venv/bin/activate
-
 # Install dependencies
-echo "Installing dependencies..."
+echo "Instalando dependencias..."
 pip install --quiet pyinstaller PySide6 httpx PyYAML cryptography
 
-# Install FreePing
-pip install -e ..
+# Generate icon
+echo "Generando icono..."
+python3 generate_icon.py
 
 # Build
-echo "Building executable..."
+echo ""
+echo "Construyendo ejecutable con PyInstaller..."
 pyinstaller freeping.spec
 
 echo ""

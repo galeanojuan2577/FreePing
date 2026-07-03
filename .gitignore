@@ -27,6 +27,7 @@ credentials.json
 dist/
 *.exe
 *.app
+!build/freeping.spec
 
 # Coverage
 htmlcov/
